@@ -1,0 +1,309 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title></title>
+
+<link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/pure/0.6.0/pure-min.css">
+<link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/pure/0.6.0/grids-responsive-min.css">
+<link rel="stylesheet" href="//maxcdn.bootstrapcdn.com/font-awesome/4.5.0/css/font-awesome.min.css">
+
+<style>
+    #viewer {
+        border: 1px solid black;
+    }
+
+    .panel {
+        border: 1px solid black;
+    }
+
+    #guideListPanel {
+        float: left;
+        width: 250px;
+    }
+
+    #guidePanel {
+        float: left;
+        width: 250px;
+    }
+
+    .activeGuide {
+        border: 1px solid black;
+    }
+
+    .activeKeyFrame {
+        border: 1px solid black;
+    }
+</style>
+
+<script src="https://unpkg.com/vue/dist/vue.js"></script>
+</head>
+
+<body>
+
+<div class="page-container">
+<div id="app"></div>
+</div>
+</body>
+
+<script type="text/javascript">
+
+const DEFAULT_GUIDE_SIZE = 250;
+
+const COLOURS = ["red", "green", "blue", "yellow", "orange", "black"];
+
+var app = new Vue({
+    el: '#app',
+    template: `
+        <div>
+        <h1>Workbench</h1>
+        <button v-on:click="finish">DONE</button>
+
+        <button v-on:click="frameIndex = 0">RESET</button>
+            <div class="panel" id="guideListPanel">
+                <h5>Guides</h5>
+
+                <button v-on:click="newGuide">NEW</button>
+
+                <div v-on:click="selectGuide(g)" class="guide" v-bind:class="{ activeGuide: g.id === selectedGuide }" v-for="g in guides">
+                    <h4>{{ g.id }}</h4>
+                </div>
+            </div>
+
+            <div class="panel" id="guidePanel">
+                <h5>Key Frames</h5>
+
+                <button>NEW KEY FRAME</button>
+
+                <div v-if="selectedGuide !== -1">
+                    <div v-on:click="selectKeyFrame(kf)" class="keyFrame" v-bind:class="{ activeKeyFrame: kf.index === selectedKeyFrame }" v-for="kf in guides[selectedGuide].keyFrames">
+                        {{ kf.index }}
+                    </div>
+                </div>
+            </div>
+
+            <canvas v-on:click="addKeyFrame" id="viewer" height="1000" width="1000"></canvas>
+        </div>
+        `,
+    data: {
+        images: [],
+        guides: [],
+        frameIndex: 0,
+        selectedGuide: -1,
+        selectedKeyFrame: -1,
+        nextColourIndex: 0,
+    },
+    created: function() {
+        this.downloadData();
+    },
+    watch: {
+        selectedKeyFrame: function(v) {
+            this.draw();
+        },
+        selectedGuide: function(v) {
+            this.draw();
+        },
+        frameIndex: function(v) {
+            this.draw();
+        },
+    },
+    mounted() {
+        window.addEventListener("keydown", e => {
+            if (e.keyCode === 37) {
+                if (this.frameIndex > 0) {
+                    this.frameIndex--;
+                }
+            } else if (e.keyCode === 39) {
+                if (this.frameIndex+1 < this.images.length) {
+                    this.frameIndex++;
+                }
+            }
+        });
+    },
+    methods: {
+        addKeyFrame: function(e) {
+            var canvas = document.getElementById('viewer');
+
+            var x = event.pageX - canvas.offsetLeft;
+            var y = event.pageY - canvas.offsetTop;
+
+            x -= Math.round(DEFAULT_GUIDE_SIZE / 2);
+            y -= Math.round(DEFAULT_GUIDE_SIZE / 2);
+
+            if (x < 0) {
+                x = 0;
+            }
+            if (y < 0) {
+                y = 0;
+            }
+
+            if (this.selectedGuide === -1) {
+                this.newGuide();
+            }
+
+            let selectedGuide = this.guides[this.selectedGuide];
+
+            // remove existing
+            let existingIndex = selectedGuide.keyFrames.findIndex(kf => { return kf.index === this.frameIndex });
+            if (existingIndex !== -1) {
+                selectedGuide.keyFrames.splice(existingIndex, 1);
+            }
+
+            selectedGuide.keyFrames.push({
+                index: this.frameIndex,
+                x: x,
+                y: y,
+                size: DEFAULT_GUIDE_SIZE,
+            });
+
+            selectedGuide.keyFrames.sort(function(a,b) {
+                return a.index - b.index;
+            });
+
+            this.selectedKeyFrame = this.frameIndex;
+
+            this.draw();
+        },
+        draw: function() {
+            let that = this;
+
+            if (this.images.length <= this.frameIndex) {
+                console.log(this.images.length, this.frameIndex);
+                return;
+            }
+
+            var canvas = document.getElementById("viewer");
+            var ctx = canvas.getContext("2d");
+
+            // draw image
+            var img = new Image();
+            img.onload = function() {
+                ctx.drawImage(img, 0, 0);
+
+
+                let overlays = that.getOverlays();
+
+                overlays.forEach(overlay => {
+                    ctx.beginPath();
+                    ctx.rect(overlay.x, overlay.y, overlay.size, overlay.size);
+                    ctx.lineWidth = "3";
+                    ctx.strokeStyle = overlay.colour;
+                    ctx.stroke();
+                });
+            };
+            img.src = this.images[this.frameIndex].src;
+        },
+        nextColour: function() {
+            let c = COLOURS[this.nextColourIndex];
+
+            this.nextColourIndex++;
+            if (this.nextColourIndex >= COLOURS.length) {
+                this.nextColourIndex = 0;
+            }
+
+            return c;
+        },
+        getOverlays: function() {
+            let overlays = [];
+
+            this.guides.forEach(guide => {
+                let i = guide.keyFrames.length - 1;
+                for (; i >= 0; i--) {
+                    let thisFrame = guide.keyFrames[i];
+
+                    if (this.frameIndex === thisFrame.index) {
+                        // exact match
+                        overlays.push({ x: thisFrame.x, y: thisFrame.y, size: thisFrame.size, colour: guide.colour});
+                        return;
+                    }
+
+                    if (thisFrame.index < this.frameIndex) {
+                        if (i + 1 >= guide.keyFrames.length) {
+                            return;
+                        }
+
+                        let midOver = this.midOverlay(thisFrame, guide.keyFrames[i+1], guide.colour);
+                        if (midOver !== undefined) {
+                            overlays.push(midOver);
+                        }
+
+                        return
+                    }
+                }
+            });
+
+            return overlays;
+        },
+        midOverlay: function(o1, o2, colour) {
+            let o = this.frameIndex - o1.index;
+            let scalar = o / (o2.index - o1.index);
+
+            let moveX = (o2.x - o1.x) * scalar;
+            let moveY = (o2.y - o1.y) * scalar;
+            let moveSize = (o2.size - o1.size) * scalar;
+
+            return {
+                x: o1.x + moveX,
+                y: o1.y + moveY,
+                size: o1.size + moveSize,
+                colour: colour,
+            };
+        },
+        selectGuide: function(g) {
+            this.selectedGuide = g.id;
+        },
+        newGuide: function() {
+            this.guides.push({
+                id: this.guides.length,
+                keyFrames: [],
+                colour: this.nextColour(),
+            });
+
+            this.selectedGuide = this.guides.length - 1;
+        },
+        nextFrame: function() {
+            this.frameIndex++;
+            if (this.frameIndex === this.images.length) {
+                this.frameIndex = 0;
+            }
+        },
+        downloadData: function() {
+            let that = this;
+
+            fetch('http://localhost:9999/image').then(async response => {
+                const data = await response.json();
+
+                data.Images.forEach(v => {
+                    let src = "data:image/jpeg;base64,"+v.Data;
+                    that.images.push({
+                        id: v.Id,
+                        src: src,
+                    });
+                });
+
+                this.draw();
+            }).catch(err => {
+                console.log("error fetching data: " + err);
+            });
+        },
+        selectKeyFrame: function(kf) {
+            this.selectedKeyFrame = kf.index;
+        },
+        finish: function() {
+            this.guides.forEach(g => {
+                g.keyFrames.forEach(f => {
+                    f.frameId = this.images[f.index].id;
+                });
+            });
+
+            let json = JSON.stringify(this.guides);
+            console.log(json);
+        }
+    },
+});
+
+</script>
+</html>
