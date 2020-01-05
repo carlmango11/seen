@@ -5,7 +5,10 @@ create table seen.jobs
     name varchar(20),
     status_id int null,
     ip varchar(16) null,
-    error varchar(20)
+    error text,
+    guide_json text,
+    created_at TIMESTAMP,
+    completed_at TIMESTAMP
 );
 
 create table seen.status

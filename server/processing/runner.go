@@ -2,6 +2,7 @@ package processing
 
 import (
 	"bufio"
+	"encoding/base64"
 	"errors"
 	"log"
 	"os/exec"
@@ -19,8 +20,18 @@ func Normalise(inPath, outPath string) error {
 	return err
 }
 
-func Prep(inPath, framesDir string) error {
-	res, err := run("./"+PrepScript, inPath, framesDir, "3")
+func CreateFrames(inPath, framesDir string) error {
+	return runReadFirstLine("./"+PrepScript, inPath, framesDir, "3")
+}
+
+func Blur(inPath, outPath, guideJson string) error {
+	encJson := base64.StdEncoding.EncodeToString([]byte(guideJson))
+	return runReadFirstLine("./"+BlurScript, inPath, outPath, encJson)
+}
+
+func runReadFirstLine(name string, args ...string) error {
+	res, err := run(name, args...)
+	log.Println("OUT", res)
 	if err != nil {
 		if len(res) == 0 {
 			return err
@@ -30,11 +41,11 @@ func Prep(inPath, framesDir string) error {
 		return errors.New(res[0])
 	}
 
-	// TODO: bad idea to expose exec output to internet?
-	return errors.New("")
+	return nil
 }
 
 func run(name string, args ...string) ([]string, error) {
+	// TODO: timeout
 	cmd := exec.Command(name, args...)
 
 	errStream, err := cmd.StderrPipe()

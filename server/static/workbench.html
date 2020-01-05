@@ -43,10 +43,9 @@
 </head>
 
 <body>
-
-<div class="page-container">
-<div id="app"></div>
-</div>
+    <div class="page-container">
+        <div id="app"></div>
+    </div>
 </body>
 
 <script type="text/javascript">
@@ -91,6 +90,7 @@ var app = new Vue({
         </div>
         `,
     data: {
+        requestId: 0,
         images: [],
         guides: [],
         frameIndex: 0,
@@ -100,6 +100,9 @@ var app = new Vue({
         keyFrameSize: DEFAULT_GUIDE_SIZE,
     },
     created: function() {
+        let urlParams = new URLSearchParams(window.location.search);
+        this.requestId = urlParams.get("id");
+
         this.downloadData();
     },
     watch: {
@@ -290,10 +293,10 @@ var app = new Vue({
         downloadData: function() {
             let that = this;
 
-            fetch('http://carlnolan.ie:9999/image').then(async response => {
+            fetch(`/workbenchData?id=${this.requestId}`).then(async response => {
                 const data = await response.json();
 
-                data.Images.forEach(v => {
+                data.Data.Images.forEach(v => {
                     let src = "data:image/jpeg;base64,"+v.Data;
                     that.images.push({
                         id: v.Id,
@@ -310,14 +313,49 @@ var app = new Vue({
             this.selectedKeyFrame = kf.index;
         },
         finish: function() {
+            let that = this;
+
             this.guides.forEach(g => {
                 g.keyFrames.forEach(f => {
                     f.frameId = this.images[f.index].id;
                 });
             });
 
-            let json = JSON.stringify(this.guides);
-            console.log(json);
+            let req = {
+                id: this.requestId,
+                guidesJson: JSON.stringify(this.guides),
+            };
+
+            fetch('/annotate', {
+                method: 'POST',
+                body: JSON.stringify(req),
+            }).then(async resp => {
+                that.poll(that.requestId);
+            }).catch(e => {
+                console.error(e);
+            });
+        },
+        poll: function (id) {
+            let that = this;
+
+            setTimeout(() => {
+                let innerThat = that;
+
+                fetch(`/status?id=${id}`).then(async resp => {
+                    let status = await resp.text();
+
+                    console.log("status: " + status);
+
+                    if (status === "complete") {
+                        window.location.href = '/download?id=' + id;
+                    } else if (status === "error") {
+                        console.error("encountered error");
+                    } else {
+                        // keep polling
+                        innerThat.poll(id);
+                    }
+                });
+            }, 500);
         }
     },
 });

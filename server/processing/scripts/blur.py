@@ -1,13 +1,17 @@
+#!/usr/bin/env python3
+
 import json
+import sys
 import cv2
 import dataclasses
+import base64
 
 
-j = """
-[{"id":0,"keyFrames":[{"index":2,"x":564,"y":266,"size":20,"frameId":18},{"index":8,"x":566,"y":274,"size":20,"frameId":72},{"index":17,"x":566,"y":293,"size":20,"frameId":153},{"index":20,"x":545,"y":320,"size":50,"frameId":180},{"index":21,"x":482,"y":322,"size":100,"frameId":189},{"index":22,"x":469,"y":357,"size":100,"frameId":198},{"index":23,"x":364,"y":502,"size":120,"frameId":207},{"index":24,"x":303,"y":622,"size":120,"frameId":216}],"colour":"red"}]
-"""
+in_file = sys.argv[1]
+out_file = sys.argv[2]
+guide_json = base64.b64decode(sys.argv[3])
 
-gs = json.loads(j)
+gs = json.loads(guide_json)
 
 
 @dataclasses.dataclass()
@@ -67,24 +71,27 @@ def process_frame(c, img, guides):
     return img
 
 
-out_path = '/Users/carl/Movies/output2.mp4'
-img_path = '/Users/carl/Movies/run.mp4'
-vid = cv2.VideoCapture(img_path)
+try:
+    vid = cv2.VideoCapture(in_file)
 
-fps = vid.get(cv2.CAP_PROP_FPS)
+    fps = vid.get(cv2.CAP_PROP_FPS)
 
-fourcc = cv2.VideoWriter_fourcc('m','p','4','v')
-out = cv2.VideoWriter(out_path, fourcc, fps, (int(vid.get(3)), int(vid.get(4))))
+    fourcc = cv2.VideoWriter_fourcc('m','p','4','v')
+    out = cv2.VideoWriter(out_file, fourcc, fps, (int(vid.get(3)), int(vid.get(4))))
 
-c = 0
-while True:
-    ret, img = vid.read()
-    if not ret:
-        break
+    c = 0
+    while True:
+        ret, img = vid.read()
+        if not ret:
+            break
 
-    out.write(process_frame(c, img, gs))
-    c += 1
+        out.write(process_frame(c, img, gs))
+        c += 1
 
-vid.release()
-out.release()
-print('finished')
+    vid.release()
+    out.release()
+
+    sys.exit(0)
+except Exception as e:
+    sys.stderr.write(e)
+    sys.exit(0) # exit with correct code so that the error message will get picked up

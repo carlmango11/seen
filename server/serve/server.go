@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -18,6 +19,13 @@ import (
 
 const (
 	JobWorkers = 5
+)
+
+const (
+	DirIncoming   = "incoming/"
+	DirNormalised = "normalised/"
+	DirFrames     = "frames/"
+	DirComplete   = "complete/"
 )
 
 type Status string
@@ -54,6 +62,11 @@ type Response struct {
 	Data   *ImageData
 }
 
+type AnnotateReq struct {
+	Id         uuid.UUID
+	GuidesJson string
+}
+
 type ImageData struct {
 	SampleHz int
 	Height   int
@@ -73,8 +86,11 @@ func (s *Server) Start() {
 	fs := http.FileServer(http.Dir("static"))
 	http.Handle("/", fs)
 
-	http.HandleFunc("/image", s.handleGetImageData)
+	http.HandleFunc("/workbenchData", s.handleGetImageData)
 	http.HandleFunc("/uploadVideo", s.handleFileUpload)
+	http.HandleFunc("/status", s.handleStatusCheck)
+	http.HandleFunc("/annotate", s.handleAnnotation)
+	http.HandleFunc("/download", s.handleDownload)
 
 	for i := 0; i < JobWorkers; i++ {
 		go s.doJobs()
@@ -85,15 +101,24 @@ func (s *Server) Start() {
 
 func (s *Server) doJobs() {
 	for job := range s.jobC {
+		log.Printf("processing %v %v", job.Id, job.Status)
+
 		switch job.Status {
 		case StatusIncoming:
-			s.processIncoming(job)
+			s.doNormalise(job)
+		case StatusNormalised:
+			s.createFrames(job)
+		case StatusAnnotated:
+			s.doBlurring(job)
 		}
 	}
 }
 
-func (s *Server) processIncoming(job *Job) {
-	err := processing.Normalise(fmt.Sprintf("%s/%s", s.storageDir, job.Id.String()))
+func (s *Server) doNormalise(job *Job) {
+	inPath := s.storageDir + DirIncoming + job.Id.String() + ".mp4" // TODO: won't always be mp4
+	outPath := s.storageDir + DirNormalised + job.Id.String() + ".mp4"
+
+	err := processing.Normalise(inPath, outPath)
 	if err != nil {
 		s.db.errStatus(job.Id, err)
 		return
@@ -103,13 +128,22 @@ func (s *Server) processIncoming(job *Job) {
 
 	// requeue for next stage
 	job.Status = StatusNormalised
-	//s.jobC <- job
+	s.jobC <- job
 }
 
-func (s *Server) createFrames(id uuid.UUID) {
-	log.Printf("creating frames for %v", id)
+func (s *Server) createFrames(job *Job) {
+	log.Printf("creating frames for %v", job.Id)
 
-	processing.Prep(fmt.Sprintf("%s/%s", s.storageDir, id.String()))
+	inputPath := s.storageDir + DirNormalised + job.Id.String() + ".mp4"
+	outputPath := s.storageDir + DirFrames + job.Id.String() + "/"
+
+	err := processing.CreateFrames(inputPath, outputPath)
+	if err != nil {
+		s.db.errStatus(job.Id, err)
+		return
+	}
+
+	s.db.setStatus(job.Id, StatusPrepped)
 
 	log.Println("converted frames successfully")
 }
@@ -117,21 +151,21 @@ func (s *Server) createFrames(id uuid.UUID) {
 func (s *Server) handleGetImageData(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Access-Control-Allow-Origin", "*")
 
-	refStr := request.FormValue("ref")
-	if refStr == "" {
-		log.Println("missing ref")
+	idStr := request.FormValue("id")
+	if idStr == "" {
+		log.Println("missing id")
 		writer.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	id, err := uuid.FromString(refStr)
+	id, err := uuid.FromString(idStr)
 	if err != nil {
-		log.Printf("invalid ref (%s): %v", refStr, err)
+		log.Printf("invalid ref (%s): %v", idStr, err)
 		writer.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	status, err := s.db.status(id)
+	status, err := s.db.getStatus(id)
 	if err != nil {
 		log.Printf("error getting status for %v: %v", id, err)
 	}
@@ -145,12 +179,127 @@ func (s *Server) handleGetImageData(writer http.ResponseWriter, request *http.Re
 			SampleHz: 1,
 			Height:   1000,
 			Width:    1400,
-			Images:   getImageData(s.storageDir),
+			Images:   getImageData(s.storageDir, id),
 		}
 	}
 
-	bs, _ := json.Marshal(resp)
+	bs, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("error marshalling: %v", err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	writer.Write(bs)
+}
+
+func (s *Server) handleStatusCheck(writer http.ResponseWriter, req *http.Request) {
+	idStr := req.FormValue("id")
+
+	id, err := uuid.FromString(idStr)
+	if err != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		log.Printf("%s is not a valid uuid: %v", idStr, err)
+		return
+	}
+
+	status, err := s.db.getStatus(id)
+	if err != nil {
+		log.Printf("error getting status for %v: %v", id, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	writer.Write([]byte(status))
+}
+
+func (s *Server) handleDownload(writer http.ResponseWriter, req *http.Request) {
+	id := req.FormValue("id")
+
+	if _, err := uuid.FromString(id); err != nil {
+		// not a valid ID. Could be dodge
+		log.Printf("received invalid complete id: %s %s", id, req.RemoteAddr)
+		writer.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	if !s.db.matchesIp(id, req.RemoteAddr) {
+		log.Printf("received unmatching ips: %v %v", id, req.RemoteAddr)
+		writer.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	filePath := s.storageDir + DirComplete + id + ".mp4"
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		log.Printf("error opening complete file: %v", err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+
+	writer.Header().Set("Content-Type", "video/mp4")
+	_, err = io.Copy(writer, f)
+	if err != nil {
+		log.Printf("error writing complete file to client %v: %v", id, err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) handleAnnotation(writer http.ResponseWriter, req *http.Request) {
+	body, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		log.Printf("error reading annotation body: %v", err)
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	var annotateReq *AnnotateReq
+	err = json.Unmarshal(body, &annotateReq)
+	if err != nil {
+		log.Printf("error unmarshalling annotation body: %v: %v", err, string(body))
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	err = s.db.writeGuideJson(annotateReq.Id, annotateReq.GuidesJson)
+	if err != nil {
+		log.Printf("error writing json: %v %v: %v", err, annotateReq.Id, string(body))
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// queue up the blur job
+	job := &Job{
+		Id:     annotateReq.Id,
+		Status: StatusAnnotated,
+	}
+	s.jobC <- job
+
+	writer.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) doBlurring(job *Job) {
+	log.Printf("performing blurring for %v", job.Id)
+
+	guideJson, err := s.db.getGuides(job.Id)
+	if err != nil {
+		s.db.errStatus(job.Id, err)
+		return
+	}
+
+	inputPath := s.storageDir + DirNormalised + job.Id.String() + ".mp4"
+	outputPath := s.storageDir + DirComplete + job.Id.String() + ".mp4"
+
+	err = processing.Blur(inputPath, outputPath, guideJson)
+	if err != nil {
+		s.db.errStatus(job.Id, err)
+		return
+	}
+
+	s.db.setComplete(job.Id)
 }
 
 func (s *Server) handleFileUpload(writer http.ResponseWriter, req *http.Request) {
@@ -187,7 +336,7 @@ func (s *Server) handleFileUpload(writer http.ResponseWriter, req *http.Request)
 	// write this byte array to our temporary file
 	out.Write(fileBytes)
 
-	err = s.db.addReq(id)
+	err = s.db.addReq(id, req.RemoteAddr)
 	if err != nil {
 		writer.WriteHeader(http.StatusInternalServerError)
 		return
@@ -201,20 +350,22 @@ func (s *Server) handleFileUpload(writer http.ResponseWriter, req *http.Request)
 	writer.Write([]byte(id.String()))
 }
 
-func getImageData(storageDir string) []*Image {
-	log.Println("get images")
+func getImageData(storageDir string, id uuid.UUID) []*Image {
+	log.Println("get images", id)
 	imgs := []*Image{}
 
-	files, err := ioutil.ReadDir(storageDir + "frames")
+	dir := storageDir + DirFrames + id.String() + "/"
+
+	files, err := ioutil.ReadDir(dir)
+	log.Printf("reading images from: %s", dir)
 	if err != nil {
 		panic(err)
 	}
 
 	for _, thisFile := range files {
 		name := thisFile.Name()
-		fullPath := storageDir + "frames/" + name
+		fullPath := dir + name
 
-		log.Println(fullPath)
 		if !strings.Contains(fullPath, ".jpg") {
 			continue
 		}

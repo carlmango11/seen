@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html xmlns:v-on="http://www.w3.org/1999/xhtml">
 <head>
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
@@ -18,20 +18,72 @@
 </head>
 
 <body>
-
-<div class="page-container">
-    <h1>Start</h1>
-
-    <form enctype="multipart/form-data" action="/uploadVideo" method="post">
-        <input type="file" name="file" />
-        <input type="submit" value="Start" />
-    </form>
-</div>
+    <div class="page-container">
+        <div id="app"></div>
+    </div>
 </body>
 
 <script type="text/javascript">
 
+var app = new Vue({
+        el: '#app',
+        template: `
+    <div>
+        <h1>Start</h1>
 
+        <form id="upload" enctype="multipart/form-data" v-on:submit.prevent="upload()">
+            <input type="file" name="file" />
+            <input type="submit" value="Start" />
+        </form>
+    </div>
+        `,
+        data: {
+        },
+        created: function() {
+        },
+        watch: {
+        },
+        methods: {
+            upload: function() {
+                console.log("uploading");
+
+                let that = this;
+
+                let form = document.getElementById('upload');
+                let formData = new FormData(form);
+
+                fetch('/uploadVideo', {
+                    method: 'POST',
+                    body: formData
+                }).then(async resp => {
+                    let id = await resp.text();
+                    console.log("got request id: " + id);
+
+                    that.poll(id);
+                }).catch(e => {
+                    console.error(e);
+                });
+            },
+            poll: function (id) {
+                let that = this;
+
+                setTimeout(() => {
+                    fetch(`/status?id=${id}`).then(async resp => {
+                        let status = await resp.text();
+
+                        console.log("status: " + status);
+
+                        if (status === "prepped") {
+                            window.location.href = '/workbench.html?id=' + id;
+                        } else {
+                            // keep polling
+                            that.poll(id);
+                        }
+                    });
+                }, 200);
+            }
+        },
+    });
 
 </script>
 </html>
