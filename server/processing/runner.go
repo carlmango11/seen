@@ -21,12 +21,12 @@ func Normalise(inPath, outPath string) error {
 }
 
 func CreateFrames(inPath, framesDir string) error {
-	return runReadFirstLine("./"+PrepScript, inPath, framesDir, "3")
+	return runReadFirstLine("python", PrepScript, inPath, framesDir, "3")
 }
 
 func Blur(inPath, outPath, guideJson string) error {
 	encJson := base64.StdEncoding.EncodeToString([]byte(guideJson))
-	return runReadFirstLine("./"+BlurScript, inPath, outPath, encJson)
+	return runReadFirstLine("python", BlurScript, inPath, outPath, encJson)
 }
 
 func runReadFirstLine(name string, args ...string) error {
