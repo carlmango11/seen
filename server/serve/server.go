@@ -87,6 +87,7 @@ func (s *Server) Start() {
 	http.Handle("/", fs)
 
 	http.HandleFunc("/workbenchData", s.handleGetImageData)
+	http.HandleFunc("/autoblur", s.autoBlur)
 	http.HandleFunc("/uploadVideo", s.handleFileUpload)
 	http.HandleFunc("/status", s.handleStatusCheck)
 	http.HandleFunc("/annotate", s.handleAnnotation)
@@ -97,6 +98,30 @@ func (s *Server) Start() {
 	}
 
 	panic(http.ListenAndServe(":9999", nil))
+}
+
+func (s *Server) autoBlur(writer http.ResponseWriter, req *http.Request) {
+	idStr := req.FormValue("id")
+
+	id, err := uuid.FromString(idStr)
+	if err != nil {
+		writer.WriteHeader(http.StatusBadRequest)
+		log.Printf("%s is not a valid uuid: %v", idStr, err)
+		return
+	}
+
+	log.Printf("AutoBlurring %v", id)
+
+	inputPath := s.storageDir + DirNormalised + idStr + ".mp4"
+	outputPath := s.storageDir + DirComplete + idStr + ".mp4"
+
+	err = processing.AutoBlur(inputPath, outputPath)
+	if err != nil {
+		s.db.errStatus(id, err)
+		return
+	}
+
+	writer.Write([]byte("Ok"))
 }
 
 func (s *Server) doJobs() {

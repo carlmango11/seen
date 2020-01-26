@@ -21,12 +21,16 @@ func Normalise(inPath, outPath string) error {
 }
 
 func CreateFrames(inPath, framesDir string) error {
-	return runReadFirstLine("python", PrepScript, inPath, framesDir, "3")
+	return runReadFirstLine("C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.7_3.7.1520.0_x64__qbz5n2kfra8p0\\python.exe", PrepScript, inPath, framesDir, "3")
 }
 
 func Blur(inPath, outPath, guideJson string) error {
 	encJson := base64.StdEncoding.EncodeToString([]byte(guideJson))
-	return runReadFirstLine("python", BlurScript, inPath, outPath, encJson)
+	return runReadFirstLine("C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.7_3.7.1520.0_x64__qbz5n2kfra8p0\\python.exe", BlurScript, inPath, outPath, encJson)
+}
+
+func AutoBlur(inPath, outPath string) error {
+	return runReadFirstLine("C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.7_3.7.1520.0_x64__qbz5n2kfra8p0\\python.exe", BlurScript, inPath, outPath)
 }
 
 func runReadFirstLine(name string, args ...string) error {

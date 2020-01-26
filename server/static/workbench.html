@@ -64,6 +64,8 @@ var app = new Vue({
             <button v-on:click="changeKeyFrameSize(10)">+</button>
             <button v-on:click="changeKeyFrameSize(-10)">-</button>
 
+            <button v-on:click="autoBlur">AutoBlur</button>
+
             <div class="panel" id="guideListPanel">
                 <h5>Guides</h5>
 
@@ -86,7 +88,8 @@ var app = new Vue({
                 </div>
             </div>
 
-            <canvas v-on:click="addKeyFrame" id="viewer" height="1000" width="1000"></canvas>
+            <canvas v-on:click="addKeyFrame" id="viewer" v-bind:width="canvasWidth" v-bind:height="canvasHeight"></canvas>
+
         </div>
         `,
     data: {
@@ -98,12 +101,22 @@ var app = new Vue({
         selectedKeyFrame: -1,
         nextColourIndex: 0,
         keyFrameSize: DEFAULT_GUIDE_SIZE,
+        window: {
+            width: 0,
+            height: 0
+        }
     },
     created: function() {
+        window.addEventListener('resize', this.handleResize)
+        this.handleResize();
+
         let urlParams = new URLSearchParams(window.location.search);
         this.requestId = urlParams.get("id");
 
         this.downloadData();
+    },
+    destroyed() {
+        window.removeEventListener('resize', this.handleResize)
     },
     watch: {
         selectedKeyFrame: function(v) {
@@ -143,6 +156,25 @@ var app = new Vue({
                     }
                 });
             });
+        },
+        handleResize() {
+            this.window.width = window.innerWidth;
+            this.window.height = window.innerHeight;
+
+            this.canvasWidth  = this.window.width * .8;
+            this.canvasHeight  = this.window.height * .8;
+        },
+        autoBlur: function() {
+            console.log("AutoBlur");
+
+            fetch(`autoblur?id=${this.requestId}`, {
+                method: 'GET',
+            }).then(async resp => {
+                that.poll(that.requestId);
+            }).catch(e => {
+                console.error(e);
+            });
+
         },
         addKeyFrame: function() {
             var canvas = document.getElementById('viewer');
