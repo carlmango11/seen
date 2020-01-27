@@ -15,6 +15,7 @@ out_file = sys.argv[2]
 try:
 	guide_json = base64.b64decode(sys.argv[3])
 	gs = json.loads(guide_json)
+
 except IndexError:
 	# No guide -> AutoBlur
 	autoblur = True
@@ -39,7 +40,7 @@ def autoblur(frame):
 	for (x, y, w, h) in faces:
 		sub_face = frame[y:y + h, x:x + w]
 		# apply a gaussian blur on this new recangle image
-		sub_face = cv2.GaussianBlur(sub_face,(23, 23), 30)
+		sub_face = cv2.GaussianBlur(sub_face,(23, 23), 50)
 		# merge this blurry rectangle to our final image
 		frame[y:y + sub_face.shape[0], x:x + sub_face.shape[1]] = sub_face
 
